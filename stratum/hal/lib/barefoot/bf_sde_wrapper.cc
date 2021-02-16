@@ -24,6 +24,7 @@
 #include "stratum/hal/lib/barefoot/macros.h"
 #include "stratum/hal/lib/barefoot/utils.h"
 #include "stratum/hal/lib/common/common.pb.h"
+#include "stratum/hal/lib/p4/utils.h"
 #include "stratum/lib/channel/channel.h"
 #include "stratum/lib/constants.h"
 #include "stratum/lib/utils.h"
@@ -403,37 +404,68 @@ template <typename T>
 }  // namespace
 
 ::util::Status TableKey::SetExact(int id, const std::string& value) {
+  const bfrt::BfRtTable* table;
+  RETURN_IF_BFRT_ERROR(table_key_->tableGet(&table));
+  size_t field_size_bits;
+  RETURN_IF_BFRT_ERROR(table->keyFieldSizeGet(id, &field_size_bits));
+  std::string s(value);
+  s.insert(0, ((field_size_bits + 7) / 8) - s.size(), '\x00');
+
   RETURN_IF_BFRT_ERROR(table_key_->setValue(
-      id, reinterpret_cast<const uint8*>(value.data()), value.size()));
+      id, reinterpret_cast<const uint8*>(s.data()), s.size()));
 
   return ::util::OkStatus();
 }
 
 ::util::Status TableKey::SetTernary(int id, const std::string& value,
                                     const std::string& mask) {
+  const bfrt::BfRtTable* table;
+  RETURN_IF_BFRT_ERROR(table_key_->tableGet(&table));
+  size_t field_size_bits;
+  RETURN_IF_BFRT_ERROR(table->keyFieldSizeGet(id, &field_size_bits));
+  std::string v(value);
+  v.insert(0, ((field_size_bits + 7) / 8) - v.size(), '\x00');
+  std::string m(mask);
+  m.insert(0, ((field_size_bits + 7) / 8) - m.size(), '\x00');
+
   DCHECK_EQ(value.size(), mask.size());
   RETURN_IF_BFRT_ERROR(table_key_->setValueandMask(
-      id, reinterpret_cast<const uint8*>(value.data()),
-      reinterpret_cast<const uint8*>(mask.data()), value.size()));
+      id, reinterpret_cast<const uint8*>(v.data()),
+      reinterpret_cast<const uint8*>(m.data()), v.size()));
 
   return ::util::OkStatus();
 }
 
 ::util::Status TableKey::SetLpm(int id, const std::string& prefix,
                                 uint16 prefix_length) {
-  RETURN_IF_BFRT_ERROR(
-      table_key_->setValueLpm(id, reinterpret_cast<const uint8*>(prefix.data()),
-                              prefix_length, prefix.size()));
+  const bfrt::BfRtTable* table;
+  RETURN_IF_BFRT_ERROR(table_key_->tableGet(&table));
+  size_t field_size_bits;
+  RETURN_IF_BFRT_ERROR(table->keyFieldSizeGet(id, &field_size_bits));
+  std::string p(prefix);
+  p.insert(0, ((field_size_bits + 7) / 8) - p.size(), '\x00');
+
+  RETURN_IF_BFRT_ERROR(table_key_->setValueLpm(
+      id, reinterpret_cast<const uint8*>(p.data()), prefix_length, p.size()));
 
   return ::util::OkStatus();
 }
 
 ::util::Status TableKey::SetRange(int id, const std::string& low,
                                   const std::string& high) {
+  const bfrt::BfRtTable* table;
+  RETURN_IF_BFRT_ERROR(table_key_->tableGet(&table));
+  size_t field_size_bits;
+  RETURN_IF_BFRT_ERROR(table->keyFieldSizeGet(id, &field_size_bits));
+  std::string l(low);
+  l.insert(0, ((field_size_bits + 7) / 8) - l.size(), '\x00');
+  std::string h(high);
+  h.insert(0, ((field_size_bits + 7) / 8) - h.size(), '\x00');
+
   DCHECK_EQ(low.size(), high.size());
   RETURN_IF_BFRT_ERROR(table_key_->setValueRange(
-      id, reinterpret_cast<const uint8*>(low.data()),
-      reinterpret_cast<const uint8*>(high.data()), low.size()));
+      id, reinterpret_cast<const uint8*>(l.data()),
+      reinterpret_cast<const uint8*>(h.data()), l.size()));
 
   return ::util::OkStatus();
 }
@@ -459,6 +491,7 @@ template <typename T>
   RETURN_IF_BFRT_ERROR(table_key_->getValue(
       id, value->size(),
       reinterpret_cast<uint8*>(gtl::string_as_array(value))));
+  *value = ByteStringToP4runtimeByteString(*value);
 
   return ::util::OkStatus();
 }
@@ -476,6 +509,8 @@ template <typename T>
   RETURN_IF_BFRT_ERROR(table_key_->getValueandMask(
       id, value->size(), reinterpret_cast<uint8*>(gtl::string_as_array(value)),
       reinterpret_cast<uint8*>(gtl::string_as_array(mask))));
+  *value = ByteStringToP4runtimeByteString(*value);
+  *mask = ByteStringToP4runtimeByteString(*mask);
 
   return ::util::OkStatus();
 }
@@ -491,6 +526,7 @@ template <typename T>
   RETURN_IF_BFRT_ERROR(table_key_->getValueLpm(
       id, prefix->size(),
       reinterpret_cast<uint8*>(gtl::string_as_array(prefix)), prefix_length));
+  *prefix = ByteStringToP4runtimeByteString(*prefix);
 
   return ::util::OkStatus();
 }
@@ -508,6 +544,8 @@ template <typename T>
   RETURN_IF_BFRT_ERROR(table_key_->getValueRange(
       id, low->size(), reinterpret_cast<uint8*>(gtl::string_as_array(low)),
       reinterpret_cast<uint8*>(gtl::string_as_array(high))));
+  *low = ByteStringToP4runtimeByteString(*low);
+  *high = ByteStringToP4runtimeByteString(*high);
 
   return ::util::OkStatus();
 }
@@ -534,8 +572,24 @@ TableKey::CreateTableKey(const bfrt::BfRtInfo* bfrt_info_, int table_id) {
 }
 
 ::util::Status TableData::SetParam(int id, const std::string& value) {
+  const bfrt::BfRtTable* table;
+  RETURN_IF_BFRT_ERROR(table_data_->getParent(&table));
+  bf_rt_id_t action_id = 0;
+  if (table->actionIdApplicable()) {
+    RETURN_IF_BFRT_ERROR(table_data_->actionIdGet(&action_id));
+  }
+  size_t field_size_bits;
+  if (action_id) {
+    RETURN_IF_BFRT_ERROR(
+        table->dataFieldSizeGet(id, action_id, &field_size_bits));
+  } else {
+    RETURN_IF_BFRT_ERROR(table->dataFieldSizeGet(id, &field_size_bits));
+  }
+  std::string p(value);
+  p.insert(0, ((field_size_bits + 7) / 8) - p.size(), '\x00');
+
   RETURN_IF_BFRT_ERROR(table_data_->setValue(
-      id, reinterpret_cast<const uint8*>(value.data()), value.size()));
+      id, reinterpret_cast<const uint8*>(p.data()), p.size()));
 
   return ::util::OkStatus();
 }
@@ -558,6 +612,7 @@ TableKey::CreateTableKey(const bfrt::BfRtInfo* bfrt_info_, int table_id) {
   RETURN_IF_BFRT_ERROR(table_data_->getValue(
       id, value->size(),
       reinterpret_cast<uint8*>(gtl::string_as_array(value))));
+  *value = ByteStringToP4runtimeByteString(*value);
 
   return ::util::OkStatus();
 }
@@ -2103,7 +2158,7 @@ namespace {
   ASSIGN_OR_RETURN(field_id, GetRegisterDataFieldId(table));
   size_t data_field_size;
   RETURN_IF_BFRT_ERROR(table->dataFieldSizeGet(field_id, &data_field_size));
-  // The SDE expects any array with the full width.
+  // The SDE expects an array with the full width.
   std::string value((data_field_size + 7) / 8, '\x00');
   value.replace(value.size() - register_data.size(), register_data.size(),
                 register_data);

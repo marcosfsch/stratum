@@ -43,6 +43,13 @@ std::string PrintP4ObjectID(int object_id);
 std::string Uint64ToByteStream(uint64 val);
 std::string Uint32ToByteStream(uint32 val);
 
+// Converts byte string to P4Runtime byte string.
+inline std::string ByteStringToP4runtimeByteString(std::string bytes) {
+  // Remove leading zeros.
+  bytes.erase(0, std::min(bytes.find_first_not_of('\x00'), bytes.size() - 1));
+  return bytes;
+}
+
 // Helper to convert a gRPC status with error details to a string. Assumes
 // ::grpc::Status includes a binary error detail which is encoding a serialized
 // version of ::google::rpc::Status proto in which the details are captured
